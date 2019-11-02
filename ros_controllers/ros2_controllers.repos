@@ -1,0 +1,17 @@
+repositories:
+  ros2_control_helpers:
+    type: git
+    url: https://github.com/Mariunil/ros2_control_helpers.git
+    version: v0.1.0
+  ros2_control_interfaces:
+    type: git
+    url: https://github.com/Mariunil/ros2_control_interfaces.git
+    version: 0.4 
+  ros2_control_parameter_server:
+    type: git
+    url: https://github.com/Mariunil/ros2_control_parameter_server.git
+    version: 0.5
+  ros_parameter_server:
+    type: git
+    url: https://github.com/Mariunil/parameter_server_interfaces.git
+    version: 0.4

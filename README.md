@@ -1,7 +1,12 @@
 # ros2_controllers
 
-## CI
-linux: [![Build Status](https://travis-ci.org/ros-controls/ros2_controllers.svg?branch=crystal)](https://travis-ci.org/ros-controls/ros2_controllers)
+## Prerequisites
+	
+	yaml-cpp
+		https://github.com/jbeder/yaml-cpp
 
-## Getting Started:
-Have a look at here: https://github.com/ros-controls/ros2_control
+
+## Installation
+
+	# Clone repo into src
+        vcs import /home/$USER/abb_ws/src < /home/$USER/abb_ws/src/ros2_controllers/ros_controllers/ros2_controllers.repos
