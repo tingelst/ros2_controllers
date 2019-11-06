@@ -4,10 +4,14 @@
   <name>ros_controllers</name>
   <version>0.0.0</version>
   <description>Description of ros_controllers</description>
-  <maintainer email="karsten@osrfoundation.org">Karsten Knese</maintainer>
+  <maintainer email="mariunil@stud.ntnu.no">Marius Nilsen</maintainer>
   <license>Apache License 2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>ros2_control_helpers</depend>
+  <depend>ros2_control_interfaces</depend>
+
 
   <build_depend>controller_interface</build_depend>
   <build_depend>controller_manager</build_depend>
@@ -16,6 +20,7 @@
   <build_depend>rclcpp_lifecycle</build_depend>
   <build_depend>sensor_msgs</build_depend>
   <build_depend>trajectory_msgs</build_depend>
+  <build_depend>parameter_server_interfaces</build_depend>
 
   <exec_depend>controller_interface</exec_depend>
   <exec_depend>controller_manager</exec_depend>
