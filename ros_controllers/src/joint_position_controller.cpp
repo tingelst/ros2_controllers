@@ -28,13 +28,15 @@
 #include "rcutils/logging_macros.h"
 
 
-//TODO: * tidy up the categories of functions
+//TODO: 
 //      * fix naming -> "joint_name" used when "joint" should have been used
+//      * Proper error handling
 
 namespace ros_controllers
 {
 
-// Helper functions...........................................................................
+
+// namespaced helper functions...........................................................................................
 unsigned int random_char()
 {
   std::random_device rd;
@@ -56,8 +58,7 @@ std::string generate_hex(const unsigned int len)
   }
   return ss.str();
 }
-// end helper functions..................................................................
-
+// .....................................................................................................................
 
 
 JointPositionController::JointPositionController()
@@ -92,13 +93,11 @@ JointPositionController::update()
   //              then updates the "correct" cmd_handle from registered_joint_cmd_handles_         
 
   //            +-----+
-  //   error -->| PID |-->cmd 
+  //    error-->| PID |-->cmd 
   //            +-----+
 
 
-
-  //RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "JointPositionController update called");
-  
+ 
   auto timeNow = this->get_lifecycle_node()->get_clock()->now();
   auto timeElapsed = timeNow - previous_update_time_;
   previous_update_time_ = timeNow;
@@ -129,10 +128,20 @@ JointPositionController::update()
     if (joint_cmd_iter != registered_joint_cmd_handles_.cend())
     {
       auto cmd_handle = *joint_cmd_iter;
-      auto desired_pos = desired_pos_map_[joint_name];
-      auto error = desired_pos - curr_pos;
-      auto cmd = pid_controllers_map_[joint_name]->compute_command(error, timeElapsed);
-      cmd_handle->set_cmd(cmd);
+      auto desired_pos = desired_pos_map_[joint_name];     
+      //auto error = desired_pos - curr_pos;
+
+      //PID deaktivert
+
+      RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "(update) joint %d, name = %s, desired_pos = %f",(int)i, joint_name.c_str(),  desired_pos);
+      //RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "              curr_pos = %f", curr_pos);
+      //RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "              error    = %f", error);
+
+      //auto cmd = pid_controllers_map_[joint_name]->compute_command(error, timeElapsed);
+      //RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "cmd = %f", cmd);
+
+
+      cmd_handle->set_cmd(desired_pos); //cmd_handle->set_cmd(cmd)
     }
 
   }
@@ -140,6 +149,58 @@ JointPositionController::update()
   return hardware_interface::HW_RET_OK;
 }
 
+//########################## Callbacks #################################################################################
+
+void 
+JointPositionController::desired_position_subscrition_callback(ros2_control_interfaces::msg::JointControl::UniquePtr msg)
+{
+  //  * State:            Active
+  //  * Performs:         Receives incoming msg, populates desired_pos_map_ 
+  //  * if unsuccessfull: Prints warning logger message with info about the issue.
+
+  // TODO: Possible optimisation: put this callback in RobotHW instead because most of the data here is not used anyway
+  // However that optimisation will be ugly due to the need to modify the base RobotHW class as there is currently no 
+  // handle for desired pos method
+
+
+  auto msg_size = msg->goals.size();                                  
+  auto names_size = msg->joints.size();                               
+  auto cmd_handle_size = registered_joint_cmd_handles_.size();
+  
+  // TODO: Error handling when data don't match expectations
+  if (names_size != msg_size)
+  {
+    names_size = 0;
+    RCLCPP_WARN_ONCE(this->get_lifecycle_node()->get_logger(),
+      "Number of joint names do not correspond to number of desired positions. Ignoring data");
+    return;
+  }
+
+  if (msg_size > cmd_handle_size)
+  {
+    RCLCPP_WARN_ONCE(this->get_lifecycle_node()->get_logger(), 
+      "Subscribed desired position more than robot can handle, adding to map anyway");
+  }
+  else if (msg_size < cmd_handle_size)
+  {
+    RCLCPP_WARN_ONCE(this->get_lifecycle_node()->get_logger(),
+      "Subscribed desired position less than total joints in robot, ignoring control for joints at the end of the list");
+  }
+
+  // Add data to hash table
+  for (size_t i = 0; i < msg_size; i++)
+  {
+    auto name = msg->joints[i];
+    auto desired_pos = msg->goals[i];
+
+    RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "(callback) joint %d, name = %s, desired_pos = %f", (int)i, name.c_str(), desired_pos);
+    desired_pos_map_[name] = desired_pos;
+  }
+
+}
+
+
+//########################## Node Lifecycle ############################################################################
 
 rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
 JointPositionController::on_configure(const rclcpp_lifecycle::State &previous_state)
@@ -170,7 +231,6 @@ JointPositionController::on_configure(const rclcpp_lifecycle::State &previous_st
     {   
       auto fp = [&joint_name](const hardware_interface::JointStateHandle *state_handle) -> bool
       { 
-        // return false if cmd_handle have the same joint_name as joint_name. True if not.
         return state_handle->get_name().compare(joint_name) == 0; 
       };
 
@@ -183,7 +243,6 @@ JointPositionController::on_configure(const rclcpp_lifecycle::State &previous_st
 
       auto fp2 = [&joint_name](const hardware_interface::JointCommandHandle *cmd_handle) -> bool 
       { 
-        // return false if cmd_handle have the same joint_name as joint_name. True if not.
         return (cmd_handle->get_name().compare(joint_name) == 0); 
       };
 
@@ -221,13 +280,6 @@ JointPositionController::on_configure(const rclcpp_lifecycle::State &previous_st
     return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
   }
 
-
-
-  // for (auto &cmd_handle : registered_joint_cmd_handles_)
-  // {
-  //   // setting all joints desired pos to 0.0
-  // }
-
   previous_update_time_ = this->get_lifecycle_node()->get_clock()->now();
   // desired_pos_vec_ = std::vector<double>();
   // desired_pos_vec_.resize(registered_joint_state_handles_.size());
@@ -235,53 +287,133 @@ JointPositionController::on_configure(const rclcpp_lifecycle::State &previous_st
   return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
-// subscriber action
-void 
-JointPositionController::desired_position_subscrition_callback(ros2_control_interfaces::msg::JointControl::UniquePtr msg)
+
+rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
+JointPositionController::on_activate(const rclcpp_lifecycle::State &previous_state)
 {
-  //  * State:            Active
-  //  * Performs:         Receives incoming msg, populates desired_pos_map_ 
-  //  * if unsuccessfull: Prints warning logger message with info about the issue.
-
-  // TODO: Possible optimisation: put this callback in RobotHW instead because most of the data here is not used anyway
-  // However that optimisation will be ugly due to the need to modify the base RobotHW class as there is currently no 
-  // handle for desired pos method
-
-  auto msg_size = msg->goals.size();                                  // changed
-  auto names_size = msg->joints.size();                               // changed
-  auto cmd_handle_size = registered_joint_cmd_handles_.size();
+  //  * State:              Activating
+  //  * Purpose:            Sets up the subscriber and loads PID controllers. 
+  //  * If Error raised:    Return to Inactive state.
   
-  // TODO: Error handling when data don't match expectations
-  if (names_size != msg_size)
+  (void) previous_state;
+  RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "JointPositionController on_activate called");
+  std::string robotName;
+
+  if (auto robot_hardware = robot_hardware_.lock()) 
   {
-    names_size = 0;
-    RCLCPP_WARN_ONCE(this->get_lifecycle_node()->get_logger(),
-      "Number of joint names do not correspond to number of desired positions. Ignoring data");
-    return;
+    //robotName = robot_hardware->get_robot_name();
+  }
+  else
+  {
+    return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
   }
 
-  if (msg_size > cmd_handle_size)
-  {
-    RCLCPP_WARN_ONCE(this->get_lifecycle_node()->get_logger(), 
-      "Subscribed desired position more than robot can handle, adding to map anyway");
-  }
-  else if (msg_size < cmd_handle_size)
-  {
-    RCLCPP_WARN_ONCE(this->get_lifecycle_node()->get_logger(),
-      "Subscribed desired position less than total joints in robot, ignoring control for joints at the end of the list");
-  }
+  auto topicName = "yumi_control"; //changed
+  subscription_ = this->get_lifecycle_node()->create_subscription<ros2_control_interfaces::msg::JointControl>(
+    topicName, rclcpp::SensorDataQoS(), 
+    std::bind(&JointPositionController::desired_position_subscrition_callback, this, std::placeholders::_1)
+    );
 
+  auto pidParams = control_helpers::Pid::Gains();
+  pidParams = get_controller_pid();
 
-  // Add data to hash table
-  for (size_t i = 0; i < msg_size; i++)
+  // Use negative p gain as a sign of error
+  if (pidParams.p_gain_ < 0)
   {
-      auto name = msg->joints[i];
-      auto desired_pos = msg->goals[i];
-      desired_pos_map_[name] = desired_pos;
+    return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
   }
 
+  RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "Creating pid controllers");
+  for (auto &j : registered_joint_cmd_handles_)
+  {
+    pid_controllers_map_[j->get_name()] = std::make_shared<control_helpers::Pid>(pidParams);
+  }
 
+  // desire_pos = initial_pos until told otherwise
+  int index = 0;
+  for (auto &cmd_handle : registered_joint_cmd_handles_)
+  {
+    desired_pos_map_.insert({cmd_handle->get_name(), registered_joint_state_handles_[index]->get_position()});
+    
+    RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "registered_joint_state_handles_[%d] = %f", index, 
+      registered_joint_state_handles_[index]);
+
+    ++index;
+  }
+
+  return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
+
+
+rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
+JointPositionController::on_deactivate(const rclcpp_lifecycle::State &previous_state)
+{
+  //  * State:              Deactivating.
+  //  * Purpose:            Cleanup/Reversing of the on_activate changes.
+  //  * If Error raised:    Node transitions to ErrorProcessing.
+  //  * If succesfull:      Node transitions to Inactive
+
+  (void)previous_state;
+  RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "JointPositionController on_deactivate called");
+  pid_controllers_map_.clear();
+  subscription_ = nullptr;
+  return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
+} 
+
+
+rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
+JointPositionController::on_cleanup(const rclcpp_lifecycle::State &previous_state)
+{
+  //  * State:            CleaningUp
+  //  * Purpose:          Clear all state and return the node to a equivalent state as when first created.
+  //  * If Error raised:  Node transitions to ErrorProcessing
+  //  * If succesfull:    Node transitions to Unconfigured
+
+  (void)previous_state;
+
+  registered_joint_state_handles_.clear();
+  registered_joint_cmd_handles_.clear();
+  desired_pos_map_.clear();
+
+  RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "JointPositionController on_cleanup called");
+  return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
+} 
+
+
+rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
+JointPositionController::on_error(const rclcpp_lifecycle::State &previous_state)
+{
+
+  //  * State:            ErrorProcessing
+  //  * Purpose:          Does: Info logger message. Should: Do Error handling.
+  //  * If Error raised:  Does: - . Should: Node transition to finalized for destruction.
+  //  * If succesfull:    Node transition to unconfigured.
+
+  (void)previous_state;
+  RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "JointPositionController on_error called");
+
+  return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
+} 
+
+
+rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
+JointPositionController::on_shutdown(const rclcpp_lifecycle::State &previous_state)
+{
+  //  * State:             ShuttingDown
+  //  * Purpose:           Perform cleanup necessary before destruction. 
+  //  * Ìf Error raised:   Does: - . Should: Node transition to ErrorProcessing.
+  //  * If succesfull:     Does: Node transition to finalized.
+
+  (void)previous_state;
+  RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "JointPositionController on_shutdown called");
+
+  return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
+} 
+
+
+//########################## Class helper functions ####################################################################
+
+
 
 //helper function
 control_helpers::Pid::Gains   //Kp, Ki, Kd
@@ -405,124 +537,10 @@ JointPositionController::get_controller_joints()
     return res->joints;
   }
 
-
-
   RCLCPP_FATAL(this->get_lifecycle_node()->get_logger(), 
     "Unable to get joints for controller %s", this->get_lifecycle_node()->get_name());
   return {};
 }
-
-
-rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
-JointPositionController::on_activate(const rclcpp_lifecycle::State &previous_state)
-{
-  //  * State:              Activating
-  //  * Purpose:            Sets up the subscriber and loads PID controllers. 
-  //  * If Error raised:    Return to Inactive state.
-  
-  (void) previous_state;
-  RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "JointPositionController on_activate called");
-  std::string robotName;
-
-  if (auto robot_hardware = robot_hardware_.lock()) //lock?
-  {
-    //robotName = robot_hardware->get_robot_name();
-  }
-  else
-  {
-    return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
-  }
-  auto topicName = "yumi/control"; //changed
-  subscription_ = this->get_lifecycle_node()->create_subscription<ros2_control_interfaces::msg::JointControl>(
-    topicName, rclcpp::SensorDataQoS(), 
-    std::bind(&JointPositionController::desired_position_subscrition_callback, this, std::placeholders::_1)
-    );
-
-  auto pidParams = control_helpers::Pid::Gains();
-  pidParams = get_controller_pid();
-
-  // Use negative p gain as a sign of error
-  if (pidParams.p_gain_ < 0)
-  {
-    return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
-  }
-
-  RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "Creating pid controllers");
-  for (auto &j : registered_joint_cmd_handles_)
-  {
-    pid_controllers_map_[j->get_name()] = std::make_shared<control_helpers::Pid>(pidParams);
-  }
-
-
-
-  return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
-}
-
-
-rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
-JointPositionController::on_deactivate(const rclcpp_lifecycle::State &previous_state)
-{
-  //  * State:              Deactivating.
-  //  * Purpose:            Cleanup/Reversing of the on_activate changes.
-  //  * If Error raised:    Node transitions to ErrorProcessing.
-  //  * If succesfull:      Node transitions to Inactive
-
-  (void)previous_state;
-  RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "JointPositionController on_deactivate called");
-  pid_controllers_map_.clear();
-  subscription_ = nullptr;
-  return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
-} 
-
-
-rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
-JointPositionController::on_cleanup(const rclcpp_lifecycle::State &previous_state)
-{
-  //  * State:            CleaningUp
-  //  * Purpose:          Clear all state and return the node to a equivalent state as when first created.
-  //  * If Error raised:  Node transitions to ErrorProcessing
-  //  * If succesfull:    Node transitions to Unconfigured
-
-  (void)previous_state;
-
-  registered_joint_state_handles_.clear();
-  registered_joint_cmd_handles_.clear();
-  desired_pos_map_.clear();
-
-  RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "JointPositionController on_cleanup called");
-  return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
-} 
-
-
-rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
-JointPositionController::on_error(const rclcpp_lifecycle::State &previous_state)
-{
-
-  //  * State:            ErrorProcessing
-  //  * Purpose:          Does: Info logger message. Should: Do Error handling.
-  //  * If Error raised:  Does: - . Should: Node transition to finalized for destruction.
-  //  * If succesfull:    Node transition to unconfigured.
-
-  (void)previous_state;
-  RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "JointPositionController on_error called");
-
-  return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
-} 
-
-
-rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
-JointPositionController::on_shutdown(const rclcpp_lifecycle::State &previous_state)
-{
-  //  * State:             ShuttingDown
-  //  * Purpose:           Perform cleanup necessary before destruction. 
-  //  * Ìf Error raised:   Does: - . Should: Node transition to ErrorProcessing.
-  //  * If succesfull:     Does: Node transition to finalized.
-
-  (void)previous_state;
-  RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "JointPositionController on_shutdown called");
-
-  return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
-} 
 
 
 } // namespace ros_controllers
