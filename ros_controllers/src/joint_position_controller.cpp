@@ -29,8 +29,9 @@
 
 
 //TODO: 
-//      * fix naming -> "joint_name" used when "joint" should have been used
-//      * Proper error handling
+//      * Fix naming -> "joint" used when "joint_name" is meant.
+//      * Proper error handling in on_configure()
+//      * PID tuning. Currently Deactivated.
 
 namespace ros_controllers
 {
@@ -113,7 +114,7 @@ JointPositionController::update()
   {
     auto state_handle = registered_joint_state_handles_[i];
     auto joint_name = state_handle->get_name();
-    auto curr_pos = state_handle->get_position();
+    //auto curr_pos = state_handle->get_position();
 
     //TODO: consider moving away from lambda functions. Atleast change name
     auto fp = [&joint_name](const hardware_interface::JointCommandHandle *cmd_handle) -> bool 
@@ -131,17 +132,13 @@ JointPositionController::update()
       auto desired_pos = desired_pos_map_[joint_name];     
       //auto error = desired_pos - curr_pos;
 
-      //PID deaktivert
+      //RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "(update) joint %d, name = %s, desired_pos = %f",(int)i, joint_name.c_str(),  desired_pos);
 
-      RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "(update) joint %d, name = %s, desired_pos = %f",(int)i, joint_name.c_str(),  desired_pos);
-      //RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "              curr_pos = %f", curr_pos);
-      //RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "              error    = %f", error);
-
+      //PID deactivated.
       //auto cmd = pid_controllers_map_[joint_name]->compute_command(error, timeElapsed);
-      //RCLCPP_INFO(this->get_lifecycle_node()->get_logger(), "cmd = %f", cmd);
+      //cmd_handle->set_cmd(cmd)
 
-
-      cmd_handle->set_cmd(desired_pos); //cmd_handle->set_cmd(cmd)
+      cmd_handle->set_cmd(desired_pos); 
     }
 
   }
