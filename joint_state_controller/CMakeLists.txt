@@ -34,6 +34,8 @@ ament_target_dependencies(joint_state_controller
 # which is appropriate when building the dll but not consuming it.
 target_compile_definitions(joint_state_controller PRIVATE "JOINT_STATE_CONTROLLER_BUILDING_DLL")
 
+pluginlib_export_plugin_description_file(controller_interface joint_state_controller.xml)
+
 install(
   DIRECTORY include/
   DESTINATION include

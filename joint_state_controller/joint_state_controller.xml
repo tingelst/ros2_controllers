@@ -1,0 +1,9 @@
+<library path="joint_state_controller">
+
+  <class name="joint_state_controller" type="ros_controllers::JointStateController" base_class_type="controller_interface::ControllerInterface">
+    <description>
+      Joint state controller
+    </description>
+  </class>
+
+</library>
